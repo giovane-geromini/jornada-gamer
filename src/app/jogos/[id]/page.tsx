@@ -1,16 +1,11 @@
-// src/app/jogos/[id]/page.tsx
+"use client";
 
+import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import type { UserGameProgress } from "@/types/game";
-
-type GamePageProps = {
-  params: Promise<{
-    id: string;
-  }>;
-};
 
 type TrophyListRow = {
   id: string;
@@ -52,8 +47,6 @@ type TimelineItem = {
   sortValue: number;
 };
 
-const USER_ID = "ae3477bf-41d0-4a02-8ef8-7e8bea096d28";
-
 function getStatusLabel(status: string | null) {
   if (!status) return "Sem status";
 
@@ -68,7 +61,7 @@ function getStatusLabel(status: string | null) {
     jogando: "Jogando",
   };
 
-  return map[status] ?? status;
+  return map[status.toLowerCase()] ?? status;
 }
 
 function getTrophyTypeLabel(type: string | null) {
@@ -124,112 +117,6 @@ function normalizeTrophy(row: TrophyRow): TrophyWithUserState {
   };
 }
 
-async function getGameById(gameId: string): Promise<UserGameProgress | null> {
-  const { data, error } = await supabase
-    .from("v_user_game_progress")
-    .select("*")
-    .eq("user_id", USER_ID)
-    .eq("game_id", gameId)
-    .single();
-
-  if (error) {
-    console.error("Erro ao buscar detalhe do jogo:", {
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
-      code: error.code,
-    });
-    return null;
-  }
-
-  return data as UserGameProgress;
-}
-
-async function getGameTrophies(gameId: string): Promise<TrophyWithUserState[]> {
-  const { data: trophyListData, error: trophyListError } = await supabase
-    .from("trophy_lists")
-    .select("id")
-    .eq("game_id", gameId);
-
-  if (trophyListError) {
-    console.error("Erro ao buscar trophy_lists:", {
-      message: trophyListError.message,
-      details: trophyListError.details,
-      hint: trophyListError.hint,
-      code: trophyListError.code,
-    });
-    return [];
-  }
-
-  const trophyListIds =
-    ((trophyListData ?? []) as TrophyListRow[])
-      .map((item) => item.id)
-      .filter(Boolean);
-
-  if (trophyListIds.length === 0) {
-    return [];
-  }
-
-  const { data: trophiesData, error: trophiesError } = await supabase
-    .from("trophies")
-    .select("*")
-    .in("trophy_list_id", trophyListIds);
-
-  if (trophiesError) {
-    console.error("Erro ao buscar troféus:", {
-      message: trophiesError.message,
-      details: trophiesError.details,
-      hint: trophiesError.hint,
-      code: trophiesError.code,
-    });
-    return [];
-  }
-
-  const rawTrophies = ((trophiesData ?? []) as TrophyRow[]).map(normalizeTrophy);
-
-  const trophies = rawTrophies.sort((a, b) => {
-    const aOrder = a.sort_order ?? 999999;
-    const bOrder = b.sort_order ?? 999999;
-    return aOrder - bOrder;
-  });
-
-  if (trophies.length === 0) {
-    return [];
-  }
-
-  const trophyIds = trophies.map((trophy) => trophy.id);
-
-  const { data: userTrophiesData, error: userTrophiesError } = await supabase
-    .from("user_trophies")
-    .select("trophy_id, earned_at")
-    .eq("user_id", USER_ID)
-    .in("trophy_id", trophyIds);
-
-  if (userTrophiesError) {
-    console.error("Erro ao buscar troféus do usuário:", {
-      message: userTrophiesError.message,
-      details: userTrophiesError.details,
-      hint: userTrophiesError.hint,
-      code: userTrophiesError.code,
-    });
-
-    return trophies;
-  }
-
-  const userTrophies = (userTrophiesData ?? []) as UserTrophyRow[];
-  const earnedMap = new Map<string, string | null>();
-
-  for (const item of userTrophies) {
-    earnedMap.set(item.trophy_id, item.earned_at);
-  }
-
-  return trophies.map((trophy) => ({
-    ...trophy,
-    earned: earnedMap.has(trophy.id),
-    earned_at: earnedMap.get(trophy.id) ?? null,
-  }));
-}
-
 function buildTimeline(
   game: UserGameProgress,
   trophies: TrophyWithUserState[],
@@ -267,21 +154,231 @@ function buildTimeline(
   return items.sort((a, b) => b.sortValue - a.sortValue);
 }
 
-export default async function GameDetailPage({ params }: GamePageProps) {
-  const resolvedParams = await params;
+export default function GameDetailPage() {
+  const router = useRouter();
+  const params = useParams<{ id: string }>();
 
-  const [game, trophies] = await Promise.all([
-    getGameById(resolvedParams.id),
-    getGameTrophies(resolvedParams.id),
-  ]);
+  const gameId = params?.id;
+
+  const [loading, setLoading] = useState(true);
+  const [notFoundState, setNotFoundState] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [game, setGame] = useState<UserGameProgress | null>(null);
+  const [trophies, setTrophies] = useState<TrophyWithUserState[]>([]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadPage() {
+      if (!gameId) {
+        if (mounted) {
+          setLoading(false);
+          setNotFoundState(true);
+        }
+        return;
+      }
+
+      setLoading(true);
+      setErrorMessage("");
+
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError) {
+        if (mounted) {
+          setErrorMessage("Não foi possível validar sua sessão.");
+          setLoading(false);
+        }
+        return;
+      }
+
+      if (!session?.user) {
+        router.replace("/login");
+        return;
+      }
+
+      const currentUserId = session.user.id;
+
+      const { data: gameData, error: gameError } = await supabase
+        .from("v_user_game_progress")
+        .select("*")
+        .eq("user_id", currentUserId)
+        .eq("game_id", gameId)
+        .single();
+
+      if (gameError || !gameData) {
+        console.error("Erro ao buscar detalhe do jogo:", {
+          message: gameError?.message,
+          details: gameError?.details,
+          hint: gameError?.hint,
+          code: gameError?.code,
+        });
+
+        if (mounted) {
+          setGame(null);
+          setTrophies([]);
+          setLoading(false);
+          setNotFoundState(true);
+        }
+        return;
+      }
+
+      const resolvedGame = gameData as UserGameProgress;
+
+      const { data: trophyListData, error: trophyListError } = await supabase
+        .from("trophy_lists")
+        .select("id")
+        .eq("game_id", gameId);
+
+      if (trophyListError) {
+        console.error("Erro ao buscar trophy_lists:", {
+          message: trophyListError.message,
+          details: trophyListError.details,
+          hint: trophyListError.hint,
+          code: trophyListError.code,
+        });
+
+        if (mounted) {
+          setGame(resolvedGame);
+          setTrophies([]);
+          setLoading(false);
+          setErrorMessage("Não foi possível carregar a lista de troféus.");
+        }
+        return;
+      }
+
+      const trophyListIds = ((trophyListData ?? []) as TrophyListRow[])
+        .map((item) => item.id)
+        .filter(Boolean);
+
+      let resolvedTrophies: TrophyWithUserState[] = [];
+
+      if (trophyListIds.length > 0) {
+        const { data: trophiesData, error: trophiesError } = await supabase
+          .from("trophies")
+          .select("*")
+          .in("trophy_list_id", trophyListIds);
+
+        if (trophiesError) {
+          console.error("Erro ao buscar troféus:", {
+            message: trophiesError.message,
+            details: trophiesError.details,
+            hint: trophiesError.hint,
+            code: trophiesError.code,
+          });
+
+          if (mounted) {
+            setGame(resolvedGame);
+            setTrophies([]);
+            setLoading(false);
+            setErrorMessage("Não foi possível carregar os troféus.");
+          }
+          return;
+        }
+
+        const rawTrophies = ((trophiesData ?? []) as TrophyRow[])
+          .map(normalizeTrophy)
+          .sort((a, b) => {
+            const aOrder = a.sort_order ?? 999999;
+            const bOrder = b.sort_order ?? 999999;
+            return aOrder - bOrder;
+          });
+
+        if (rawTrophies.length > 0) {
+          const trophyIds = rawTrophies.map((trophy) => trophy.id);
+
+          const { data: userTrophiesData, error: userTrophiesError } = await supabase
+            .from("user_trophies")
+            .select("trophy_id, earned_at")
+            .eq("user_id", currentUserId)
+            .in("trophy_id", trophyIds);
+
+          if (userTrophiesError) {
+            console.error("Erro ao buscar troféus do usuário:", {
+              message: userTrophiesError.message,
+              details: userTrophiesError.details,
+              hint: userTrophiesError.hint,
+              code: userTrophiesError.code,
+            });
+
+            resolvedTrophies = rawTrophies;
+          } else {
+            const userTrophies = (userTrophiesData ?? []) as UserTrophyRow[];
+            const earnedMap = new Map<string, string | null>();
+
+            for (const item of userTrophies) {
+              earnedMap.set(item.trophy_id, item.earned_at);
+            }
+
+            resolvedTrophies = rawTrophies.map((trophy) => ({
+              ...trophy,
+              earned: earnedMap.has(trophy.id),
+              earned_at: earnedMap.get(trophy.id) ?? null,
+            }));
+          }
+        }
+      }
+
+      if (mounted) {
+        setGame(resolvedGame);
+        setTrophies(resolvedTrophies);
+        setLoading(false);
+      }
+    }
+
+    loadPage();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session?.user) {
+        router.replace("/login");
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [gameId, router]);
+
+  const timeline = useMemo(() => {
+    if (!game) return [];
+    return buildTimeline(game, trophies);
+  }, [game, trophies]);
+
+  if (notFoundState) {
+    notFound();
+  }
+
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-zinc-950 text-zinc-100">
+        <section className="mx-auto flex min-h-screen w-full max-w-7xl items-center justify-center px-6 py-10">
+          <div className="rounded-3xl border border-zinc-800 bg-zinc-900 px-6 py-5 text-sm text-zinc-300 shadow-lg shadow-black/20">
+            Carregando detalhes do jogo...
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   if (!game) {
-    notFound();
+    return (
+      <main className="min-h-screen bg-zinc-950 text-zinc-100">
+        <section className="mx-auto flex min-h-screen w-full max-w-5xl items-center justify-center px-6 py-10">
+          <div className="rounded-3xl border border-red-900/40 bg-red-950/30 px-6 py-5 text-sm text-red-200">
+            Não foi possível carregar este jogo.
+          </div>
+        </section>
+      </main>
+    );
   }
 
   const earnedCount = trophies.filter((trophy) => trophy.earned).length;
   const pendingCount = trophies.length - earnedCount;
-  const timeline = buildTimeline(game, trophies);
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -294,6 +391,12 @@ export default async function GameDetailPage({ params }: GamePageProps) {
             ← Voltar ao início
           </Link>
         </div>
+
+        {errorMessage && (
+          <div className="rounded-2xl border border-amber-900/40 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
+            {errorMessage}
+          </div>
+        )}
 
         <div className="grid gap-8 lg:grid-cols-[320px_minmax(0,1fr)]">
           <div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-5 shadow-lg shadow-black/20">
