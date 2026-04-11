@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import type { UserGameProgress } from "@/types/game";
-
-type StatusFilter = "Todos" | "Jogando" | "Zerado" | "Backlog";
+import AppShell from "@/components/AppShell";
 
 function getStatusLabel(status: string | null) {
   if (!status) return "Sem status";
@@ -85,6 +84,15 @@ function sortGames(games: UserGameProgress[]) {
   });
 }
 
+function getInitials(name: string) {
+  const parts = name.trim().split(" ").filter(Boolean);
+
+  if (parts.length === 0) return "JG";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+}
+
 export default function HomePage() {
   const router = useRouter();
 
@@ -118,7 +126,7 @@ export default function HomePage() {
         setUserDisplayName(profile?.display_name ?? "");
         setGames(sortGames(gamesData));
       } catch (error) {
-        console.error("Erro ao carregar dashboard:", error);
+        console.error("Erro ao carregar home:", error);
       } finally {
         setLoading(false);
       }
@@ -133,209 +141,282 @@ export default function HomePage() {
     router.refresh();
   }
 
+  const loggedLabel = userDisplayName || userEmail || "Jogador";
+
+  const totalEarned = useMemo(
+    () => games.reduce((acc, game) => acc + game.earned_trophies, 0),
+    [games],
+  );
+
+  const totalTrophies = useMemo(
+    () => games.reduce((acc, game) => acc + game.total_trophies, 0),
+    [games],
+  );
+
+  const playingCount = useMemo(
+    () =>
+      games.filter((game) => normalizeStatus(game.status) === "Jogando").length,
+    [games],
+  );
+
+  const highlightGame = useMemo(
+    () => games.find((g) => normalizeStatus(g.status) === "Jogando") || games[0],
+    [games],
+  );
+
+  const recentGames = useMemo(() => games.slice(0, 4), [games]);
+
   if (loading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-zinc-950 text-white">
-        Carregando...
-      </main>
+      <AppShell>
+        <div className="space-y-3 py-16 text-center">
+          <div className="mx-auto h-10 w-10 animate-pulse rounded-full bg-white/10" />
+          <p className="text-sm text-zinc-400">Carregando sua jornada...</p>
+        </div>
+      </AppShell>
     );
   }
 
-  const totalEarned = games.reduce((acc, game) => acc + game.earned_trophies, 0);
-
-  const totalTrophies = games.reduce(
-    (acc, game) => acc + game.total_trophies,
-    0,
-  );
-
-  const highlightGame =
-    games.find((g) => normalizeStatus(g.status) === "Jogando") || games[0];
-
-  const statusFilters: StatusFilter[] = [
-    "Todos",
-    "Jogando",
-    "Zerado",
-    "Backlog",
-  ];
-
-  const loggedLabel = userDisplayName || userEmail || "Usuário";
-
   return (
-    <main className="min-h-screen bg-zinc-950 text-zinc-100">
-      <section className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-6 py-10">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="space-y-3">
-            <p className="text-sm uppercase tracking-[0.2em] text-zinc-500">
-              Jornada Gamer
-            </p>
-
-            <h1 className="text-4xl font-bold tracking-tight">
-              Dashboard de Progresso
-            </h1>
-
-            <p className="max-w-2xl text-sm text-zinc-400 sm:text-base">
-              Sua jornada gamer organizada em um só lugar.
-            </p>
+    <AppShell>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-lg font-bold text-white shadow-lg shadow-black/30 backdrop-blur">
+            {getInitials(loggedLabel)}
           </div>
 
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4 text-sm">
-            <p className="text-zinc-400">Logado como:</p>
-            <p className="mt-1 break-all font-medium text-zinc-100">
+          <div>
+            <p className="text-sm text-zinc-500">Bem-vindo de volta</p>
+            <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
               {loggedLabel}
+            </h1>
+            <p className="mt-1 text-sm text-zinc-400">
+              Continue sua jornada gamer
             </p>
-
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="mt-4 w-full rounded-xl border border-zinc-700 px-4 py-2 text-sm text-zinc-200 transition hover:bg-zinc-800 hover:text-white"
-            >
-              Sair
-            </button>
           </div>
         </div>
 
-        {highlightGame && (
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-zinc-200 transition-all duration-200 hover:scale-[1.02] hover:bg-white/10 hover:text-white"
+        >
+          Sair
+        </button>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[1.6fr_0.9fr]">
+        {highlightGame ? (
           <Link
             href={`/jogos/${highlightGame.game_id}`}
-            className="group relative overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-900 p-6 transition hover:border-zinc-700"
+            className="group relative overflow-hidden rounded-[32px] border border-white/10 bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-950 p-5 shadow-2xl shadow-black/30 transition-all duration-300 hover:-translate-y-1 hover:border-white/15 hover:shadow-black/50 sm:p-6"
           >
-            <div className="flex flex-col gap-6 sm:flex-row">
-              <div className="relative h-[160px] w-[110px] overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950">
-                {highlightGame.cover_url && (
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.10),transparent_35%)] opacity-80" />
+
+            <div className="relative flex flex-col gap-5 sm:flex-row">
+              <div className="relative h-[180px] w-[120px] overflow-hidden rounded-2xl border border-white/10 bg-black/40 shadow-lg shadow-black/40">
+                {highlightGame.cover_url ? (
                   <Image
                     src={highlightGame.cover_url}
                     alt={highlightGame.title}
                     fill
-                    className="object-contain"
+                    priority
+                    className="object-cover transition-transform duration-500 group-hover:scale-105"
                     unoptimized
                   />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-sm text-zinc-500">
+                    Sem capa
+                  </div>
                 )}
               </div>
 
-              <div className="flex-1 space-y-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">
-                  Continue jogando
-                </p>
+              <div className="flex flex-1 flex-col justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">
+                    Continue jogando
+                  </p>
 
-                <h2 className="text-2xl font-semibold">{highlightGame.title}</h2>
+                  <h2 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
+                    {highlightGame.title}
+                  </h2>
 
-                <div className="flex flex-wrap gap-3 text-sm">
-                  <span className="rounded-full border border-zinc-700 px-3 py-1">
-                    {getStatusLabel(highlightGame.status)}
-                  </span>
+                  <p className="mt-2 text-sm text-zinc-400">
+                    {highlightGame.platform_name}
+                  </p>
 
-                  <span className="rounded-full border border-zinc-700 px-3 py-1">
-                    {highlightGame.progress_percent}%
-                  </span>
+                  <div className="mt-4 flex flex-wrap gap-2 text-sm">
+                    <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-zinc-100">
+                      {getStatusLabel(highlightGame.status)}
+                    </span>
 
-                  <span className="rounded-full border border-zinc-700 px-3 py-1">
-                    {highlightGame.earned_trophies} /{" "}
-                    {highlightGame.total_trophies} troféus
-                  </span>
+                    <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-zinc-100">
+                      {highlightGame.progress_percent}%
+                    </span>
+
+                    <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-zinc-100">
+                      {highlightGame.earned_trophies}/{highlightGame.total_trophies} troféus
+                    </span>
+                  </div>
                 </div>
 
-                <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-800">
-                  <div
-                    className="h-full bg-zinc-200"
-                    style={{
-                      width: `${highlightGame.progress_percent}%`,
-                    }}
-                  />
+                <div className="mt-6 space-y-2">
+                  <div className="flex items-center justify-between text-xs text-zinc-400">
+                    <span>Progresso atual</span>
+                    <span>{highlightGame.progress_percent}%</span>
+                  </div>
+
+                  <div className="h-2.5 w-full overflow-hidden rounded-full bg-white/10">
+                    <div
+                      className="h-full rounded-full bg-white transition-all duration-500"
+                      style={{
+                        width: `${highlightGame.progress_percent}%`,
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
           </Link>
+        ) : (
+          <div className="rounded-[32px] border border-white/10 bg-zinc-900 p-6">
+            <p className="text-sm text-zinc-400">Nenhum jogo encontrado ainda.</p>
+          </div>
         )}
 
-        <div className="grid gap-4 sm:grid-cols-3">
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-            <p className="text-sm text-zinc-400">Jogos</p>
-            <p className="mt-2 text-3xl font-bold">{games.length}</p>
+        <div className="rounded-[32px] border border-white/10 bg-gradient-to-br from-zinc-900 to-zinc-950 p-5 shadow-2xl shadow-black/20">
+          <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">
+            Seu perfil
+          </p>
+
+          <div className="mt-5 flex items-center gap-4">
+            <div className="flex h-16 w-16 items-center justify-center rounded-3xl border border-white/10 bg-white/5 text-xl font-bold text-white">
+              {getInitials(loggedLabel)}
+            </div>
+
+            <div className="min-w-0">
+              <h3 className="truncate text-lg font-semibold">{loggedLabel}</h3>
+              <p className="truncate text-sm text-zinc-400">{userEmail}</p>
+            </div>
           </div>
 
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-            <p className="text-sm text-zinc-400">Troféus conquistados</p>
-            <p className="mt-2 text-3xl font-bold">{totalEarned}</p>
+          <div className="mt-6 grid grid-cols-2 gap-3">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="text-xs text-zinc-500">Jogando</p>
+              <p className="mt-1 text-2xl font-bold">{playingCount}</p>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="text-xs text-zinc-500">Biblioteca</p>
+              <p className="mt-1 text-2xl font-bold">{games.length}</p>
+            </div>
           </div>
 
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-            <p className="text-sm text-zinc-400">Troféus totais</p>
-            <p className="mt-2 text-3xl font-bold">{totalTrophies}</p>
-          </div>
+          <Link
+            href="/perfil"
+            className="mt-5 inline-flex w-full items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white transition-all duration-200 hover:bg-white/10"
+          >
+            Ver perfil
+          </Link>
+        </div>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <div className="rounded-[28px] border border-white/10 bg-zinc-900/70 p-5 shadow-xl shadow-black/20 backdrop-blur">
+          <p className="text-sm text-zinc-500">Jogos</p>
+          <p className="mt-2 text-3xl font-bold">{games.length}</p>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          {statusFilters.map((filter) => (
-            <button
-              key={filter}
-              type="button"
-              className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-zinc-300 transition hover:bg-zinc-800 hover:text-white"
-            >
-              {filter}
-            </button>
-          ))}
+        <div className="rounded-[28px] border border-white/10 bg-zinc-900/70 p-5 shadow-xl shadow-black/20 backdrop-blur">
+          <p className="text-sm text-zinc-500">Troféus conquistados</p>
+          <p className="mt-2 text-3xl font-bold">{totalEarned}</p>
         </div>
 
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {games.map((game) => (
-            <Link
-              key={game.game_id}
-              href={`/jogos/${game.game_id}`}
-              className="group overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-900 shadow-lg shadow-black/20 transition hover:-translate-y-1 hover:border-zinc-700"
-            >
-              <div className="bg-zinc-950 p-4 pb-0">
-                <div className="relative mx-auto aspect-[2/3] w-full max-w-[260px] overflow-hidden rounded-2xl border border-zinc-800">
-                  {game.cover_url ? (
-                    <Image
-                      src={game.cover_url}
-                      alt={game.title}
-                      fill
-                      className="object-contain transition group-hover:scale-105"
-                      unoptimized
-                    />
-                  ) : (
-                    <div className="flex h-full items-center justify-center text-zinc-500">
-                      Sem capa
-                    </div>
-                  )}
+        <div className="rounded-[28px] border border-white/10 bg-zinc-900/70 p-5 shadow-xl shadow-black/20 backdrop-blur">
+          <p className="text-sm text-zinc-500">Troféus totais</p>
+          <p className="mt-2 text-3xl font-bold">{totalTrophies}</p>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">
+            Sua biblioteca
+          </p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight">
+            Jogos em destaque
+          </h2>
+        </div>
+
+        <Link
+          href="/biblioteca"
+          className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-zinc-200 transition hover:bg-white/10 hover:text-white"
+        >
+          Ver todos
+        </Link>
+      </div>
+
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
+        {recentGames.map((game) => (
+          <Link
+            key={game.game_id}
+            href={`/jogos/${game.game_id}`}
+            className="group overflow-hidden rounded-[28px] border border-white/10 bg-zinc-900/80 shadow-xl shadow-black/25 transition-all duration-300 hover:-translate-y-1.5 hover:border-white/15 hover:shadow-black/40"
+          >
+            <div className="relative aspect-[3/4] overflow-hidden bg-black">
+              {game.cover_url ? (
+                <Image
+                  src={game.cover_url}
+                  alt={game.title}
+                  fill
+                  className="object-cover transition-transform duration-500 group-hover:scale-105"
+                  unoptimized
+                />
+              ) : (
+                <div className="flex h-full items-center justify-center text-sm text-zinc-500">
+                  Sem capa
                 </div>
+              )}
+
+              <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/80 to-transparent" />
+            </div>
+
+            <div className="space-y-3 p-4">
+              <div>
+                <h3 className="line-clamp-1 text-lg font-semibold">{game.title}</h3>
+                <p className="mt-1 text-sm text-zinc-400">{game.platform_name}</p>
               </div>
 
-              <div className="space-y-4 p-5">
-                <div>
-                  <h2 className="text-lg font-semibold">{game.title}</h2>
-                  <p className="text-sm text-zinc-400">{game.platform_name}</p>
+              <div className="flex items-center justify-between text-sm">
+                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-zinc-200">
+                  {getStatusLabel(game.status)}
+                </span>
+                <span className="text-zinc-300">{game.progress_percent}%</span>
+              </div>
+
+              <div className="space-y-2">
+                <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-white transition-all duration-500"
+                    style={{
+                      width: `${game.progress_percent}%`,
+                    }}
+                  />
                 </div>
 
-                <div className="flex justify-between text-sm">
-                  <span className="rounded-full border border-zinc-700 px-3 py-1">
-                    {getStatusLabel(game.status)}
+                <div className="flex items-center justify-between text-xs text-zinc-500">
+                  <span>
+                    {game.earned_trophies} / {game.total_trophies} troféus
                   </span>
-                  <span>{game.progress_percent}%</span>
-                </div>
-
-                <div className="space-y-2">
-                  <div className="h-2 w-full rounded-full bg-zinc-800">
-                    <div
-                      className="h-full bg-zinc-200"
-                      style={{
-                        width: `${game.progress_percent}%`,
-                      }}
-                    />
-                  </div>
-
-                  <div className="flex justify-between text-xs text-zinc-400">
-                    <span>
-                      {game.earned_trophies} de {game.total_trophies}
-                    </span>
-                    <span>→</span>
-                  </div>
+                  <span className="transition-transform duration-200 group-hover:translate-x-1">
+                    →
+                  </span>
                 </div>
               </div>
-            </Link>
-          ))}
-        </div>
-      </section>
-    </main>
+            </div>
+          </Link>
+        ))}
+      </div>
+    </AppShell>
   );
 }
