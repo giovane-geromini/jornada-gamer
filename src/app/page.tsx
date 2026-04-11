@@ -1,9 +1,11 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import type { UserGameProgress } from "@/types/game";
-
-const USER_ID = "ae3477bf-41d0-4a02-8ef8-7e8bea096d28";
 
 type StatusFilter = "Todos" | "Jogando" | "Zerado" | "Backlog";
 
@@ -36,11 +38,11 @@ function normalizeStatus(status: string | null) {
   return "Outro";
 }
 
-async function getUserGames(): Promise<UserGameProgress[]> {
+async function getUserGames(userId: string): Promise<UserGameProgress[]> {
   const { data, error } = await supabase
     .from("v_user_game_progress")
     .select("*")
-    .eq("user_id", USER_ID);
+    .eq("user_id", userId);
 
   if (error) {
     console.error("Erro ao buscar jogos:", error);
@@ -48,6 +50,21 @@ async function getUserGames(): Promise<UserGameProgress[]> {
   }
 
   return (data ?? []) as UserGameProgress[];
+}
+
+async function getUserProfile(userId: string) {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("display_name, email")
+    .eq("id", userId)
+    .single();
+
+  if (error) {
+    console.error("Erro ao buscar perfil:", error);
+    return null;
+  }
+
+  return data;
 }
 
 function sortGames(games: UserGameProgress[]) {
@@ -60,8 +77,7 @@ function sortGames(games: UserGameProgress[]) {
       return 3;
     };
 
-    const statusDiff =
-      statusPriority(a.status) - statusPriority(b.status);
+    const statusDiff = statusPriority(a.status) - statusPriority(b.status);
 
     if (statusDiff !== 0) return statusDiff;
 
@@ -69,23 +85,71 @@ function sortGames(games: UserGameProgress[]) {
   });
 }
 
-export default async function HomePage() {
-  const gamesRaw = await getUserGames();
-  const gamesSorted = sortGames(gamesRaw);
+export default function HomePage() {
+  const router = useRouter();
 
-  const totalEarned = gamesRaw.reduce(
-    (acc, game) => acc + game.earned_trophies,
-    0,
-  );
+  const [loading, setLoading] = useState(true);
+  const [games, setGames] = useState<UserGameProgress[]>([]);
+  const [userDisplayName, setUserDisplayName] = useState("");
+  const [userEmail, setUserEmail] = useState("");
 
-  const totalTrophies = gamesRaw.reduce(
+  useEffect(() => {
+    async function init() {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (!session) {
+          router.replace("/login");
+          return;
+        }
+
+        const userId = session.user.id;
+        const emailFromSession = session.user.email ?? "";
+
+        setUserEmail(emailFromSession);
+
+        const [profile, gamesData] = await Promise.all([
+          getUserProfile(userId),
+          getUserGames(userId),
+        ]);
+
+        setUserDisplayName(profile?.display_name ?? "");
+        setGames(sortGames(gamesData));
+      } catch (error) {
+        console.error("Erro ao carregar dashboard:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    init();
+  }, [router]);
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    router.replace("/login");
+    router.refresh();
+  }
+
+  if (loading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-zinc-950 text-white">
+        Carregando...
+      </main>
+    );
+  }
+
+  const totalEarned = games.reduce((acc, game) => acc + game.earned_trophies, 0);
+
+  const totalTrophies = games.reduce(
     (acc, game) => acc + game.total_trophies,
     0,
   );
 
   const highlightGame =
-    gamesSorted.find((g) => normalizeStatus(g.status) === "Jogando") ||
-    gamesSorted[0];
+    games.find((g) => normalizeStatus(g.status) === "Jogando") || games[0];
 
   const statusFilters: StatusFilter[] = [
     "Todos",
@@ -94,24 +158,42 @@ export default async function HomePage() {
     "Backlog",
   ];
 
+  const loggedLabel = userDisplayName || userEmail || "Usuário";
+
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100">
       <section className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-6 py-10">
-        <div className="space-y-3">
-          <p className="text-sm uppercase tracking-[0.2em] text-zinc-500">
-            Jornada Gamer
-          </p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-3">
+            <p className="text-sm uppercase tracking-[0.2em] text-zinc-500">
+              Jornada Gamer
+            </p>
 
-          <h1 className="text-4xl font-bold tracking-tight">
-            Dashboard de Progresso
-          </h1>
+            <h1 className="text-4xl font-bold tracking-tight">
+              Dashboard de Progresso
+            </h1>
 
-          <p className="max-w-2xl text-sm text-zinc-400 sm:text-base">
-            Sua jornada gamer organizada em um só lugar.
-          </p>
+            <p className="max-w-2xl text-sm text-zinc-400 sm:text-base">
+              Sua jornada gamer organizada em um só lugar.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4 text-sm">
+            <p className="text-zinc-400">Logado como:</p>
+            <p className="mt-1 break-all font-medium text-zinc-100">
+              {loggedLabel}
+            </p>
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="mt-4 w-full rounded-xl border border-zinc-700 px-4 py-2 text-sm text-zinc-200 transition hover:bg-zinc-800 hover:text-white"
+            >
+              Sair
+            </button>
+          </div>
         </div>
 
-        {/* 🔥 CARD DE DESTAQUE */}
         {highlightGame && (
           <Link
             href={`/jogos/${highlightGame.game_id}`}
@@ -135,9 +217,7 @@ export default async function HomePage() {
                   Continue jogando
                 </p>
 
-                <h2 className="text-2xl font-semibold">
-                  {highlightGame.title}
-                </h2>
+                <h2 className="text-2xl font-semibold">{highlightGame.title}</h2>
 
                 <div className="flex flex-wrap gap-3 text-sm">
                   <span className="rounded-full border border-zinc-700 px-3 py-1">
@@ -167,35 +247,23 @@ export default async function HomePage() {
           </Link>
         )}
 
-        {/* RESUMO */}
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
             <p className="text-sm text-zinc-400">Jogos</p>
-            <p className="mt-2 text-3xl font-bold">
-              {gamesRaw.length}
-            </p>
+            <p className="mt-2 text-3xl font-bold">{games.length}</p>
           </div>
 
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-            <p className="text-sm text-zinc-400">
-              Troféus conquistados
-            </p>
-            <p className="mt-2 text-3xl font-bold">
-              {totalEarned}
-            </p>
+            <p className="text-sm text-zinc-400">Troféus conquistados</p>
+            <p className="mt-2 text-3xl font-bold">{totalEarned}</p>
           </div>
 
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-            <p className="text-sm text-zinc-400">
-              Troféus totais
-            </p>
-            <p className="mt-2 text-3xl font-bold">
-              {totalTrophies}
-            </p>
+            <p className="text-sm text-zinc-400">Troféus totais</p>
+            <p className="mt-2 text-3xl font-bold">{totalTrophies}</p>
           </div>
         </div>
 
-        {/* ⚠️ filtros visuais por enquanto */}
         <div className="flex flex-wrap gap-2">
           {statusFilters.map((filter) => (
             <button
@@ -208,9 +276,8 @@ export default async function HomePage() {
           ))}
         </div>
 
-        {/* GRID */}
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {gamesSorted.map((game) => (
+          {games.map((game) => (
             <Link
               key={game.game_id}
               href={`/jogos/${game.game_id}`}
@@ -236,12 +303,8 @@ export default async function HomePage() {
 
               <div className="space-y-4 p-5">
                 <div>
-                  <h2 className="text-lg font-semibold">
-                    {game.title}
-                  </h2>
-                  <p className="text-sm text-zinc-400">
-                    {game.platform_name}
-                  </p>
+                  <h2 className="text-lg font-semibold">{game.title}</h2>
+                  <p className="text-sm text-zinc-400">{game.platform_name}</p>
                 </div>
 
                 <div className="flex justify-between text-sm">
@@ -263,8 +326,7 @@ export default async function HomePage() {
 
                   <div className="flex justify-between text-xs text-zinc-400">
                     <span>
-                      {game.earned_trophies} de{" "}
-                      {game.total_trophies}
+                      {game.earned_trophies} de {game.total_trophies}
                     </span>
                     <span>→</span>
                   </div>
