@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -215,6 +215,95 @@ function isoToLocalDateAndTime(value: string | null) {
   };
 }
 
+async function getGameById(currentUserId: string, currentGameId: string) {
+  const { data, error } = await supabase
+    .from("v_user_game_progress")
+    .select("*")
+    .eq("user_id", currentUserId)
+    .eq("game_id", currentGameId)
+    .single();
+
+  if (error) {
+    console.error("Erro ao buscar detalhe do jogo:", error);
+    return null;
+  }
+
+  return data as UserGameProgress;
+}
+
+async function getGameTrophies(currentUserId: string, currentGameId: string) {
+  const { data: trophyListData, error: trophyListError } = await supabase
+    .from("trophy_lists")
+    .select("id")
+    .eq("game_id", currentGameId);
+
+  if (trophyListError) {
+    console.error("Erro ao buscar trophy_lists:", trophyListError);
+    return [];
+  }
+
+  const trophyListIds = ((trophyListData ?? []) as TrophyListRow[])
+    .map((item) => item.id)
+    .filter(Boolean);
+
+  if (trophyListIds.length === 0) {
+    return [];
+  }
+
+  const { data: trophiesData, error: trophiesError } = await supabase
+    .from("trophies")
+    .select("*")
+    .in("trophy_list_id", trophyListIds);
+
+  if (trophiesError) {
+    console.error("Erro ao buscar troféus:", trophiesError);
+    return [];
+  }
+
+  const rawTrophies = ((trophiesData ?? []) as TrophyRow[]).map(normalizeTrophy);
+
+  const orderedTrophies = rawTrophies.sort((a, b) => {
+    const aOrder = a.sort_order ?? 999999;
+    const bOrder = b.sort_order ?? 999999;
+    return aOrder - bOrder;
+  });
+
+  if (orderedTrophies.length === 0) {
+    return [];
+  }
+
+  const trophyIds = orderedTrophies.map((trophy) => trophy.id);
+
+  const { data: userTrophiesData, error: userTrophiesError } = await supabase
+    .from("user_trophies")
+    .select("trophy_id, earned_at, notes")
+    .eq("user_id", currentUserId)
+    .in("trophy_id", trophyIds);
+
+  if (userTrophiesError) {
+    console.error("Erro ao buscar troféus do usuário:", userTrophiesError);
+    return orderedTrophies;
+  }
+
+  const userTrophies = (userTrophiesData ?? []) as UserTrophyRow[];
+  const earnedMap = new Map<string, UserTrophyRow>();
+
+  for (const item of userTrophies) {
+    earnedMap.set(item.trophy_id, item);
+  }
+
+  return orderedTrophies.map((trophy) => {
+    const earnedData = earnedMap.get(trophy.id);
+
+    return {
+      ...trophy,
+      earned: Boolean(earnedData),
+      earned_at: earnedData?.earned_at ?? null,
+      notes: earnedData?.notes ?? null,
+    };
+  });
+}
+
 export default function GameDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -238,104 +327,18 @@ export default function GameDetailPage() {
 
   const gameId = typeof params?.id === "string" ? params.id : "";
 
-  async function getGameById(currentUserId: string, currentGameId: string) {
-    const { data, error } = await supabase
-      .from("v_user_game_progress")
-      .select("*")
-      .eq("user_id", currentUserId)
-      .eq("game_id", currentGameId)
-      .single();
+  const loadData = useCallback(
+    async (currentUserId: string, currentGameId: string) => {
+      const [gameData, trophiesData] = await Promise.all([
+        getGameById(currentUserId, currentGameId),
+        getGameTrophies(currentUserId, currentGameId),
+      ]);
 
-    if (error) {
-      console.error("Erro ao buscar detalhe do jogo:", error);
-      return null;
-    }
-
-    return data as UserGameProgress;
-  }
-
-  async function getGameTrophies(currentUserId: string, currentGameId: string) {
-    const { data: trophyListData, error: trophyListError } = await supabase
-      .from("trophy_lists")
-      .select("id")
-      .eq("game_id", currentGameId);
-
-    if (trophyListError) {
-      console.error("Erro ao buscar trophy_lists:", trophyListError);
-      return [];
-    }
-
-    const trophyListIds = ((trophyListData ?? []) as TrophyListRow[])
-      .map((item) => item.id)
-      .filter(Boolean);
-
-    if (trophyListIds.length === 0) {
-      return [];
-    }
-
-    const { data: trophiesData, error: trophiesError } = await supabase
-      .from("trophies")
-      .select("*")
-      .in("trophy_list_id", trophyListIds);
-
-    if (trophiesError) {
-      console.error("Erro ao buscar troféus:", trophiesError);
-      return [];
-    }
-
-    const rawTrophies = ((trophiesData ?? []) as TrophyRow[]).map(normalizeTrophy);
-
-    const orderedTrophies = rawTrophies.sort((a, b) => {
-      const aOrder = a.sort_order ?? 999999;
-      const bOrder = b.sort_order ?? 999999;
-      return aOrder - bOrder;
-    });
-
-    if (orderedTrophies.length === 0) {
-      return [];
-    }
-
-    const trophyIds = orderedTrophies.map((trophy) => trophy.id);
-
-    const { data: userTrophiesData, error: userTrophiesError } = await supabase
-      .from("user_trophies")
-      .select("trophy_id, earned_at, notes")
-      .eq("user_id", currentUserId)
-      .in("trophy_id", trophyIds);
-
-    if (userTrophiesError) {
-      console.error("Erro ao buscar troféus do usuário:", userTrophiesError);
-      return orderedTrophies;
-    }
-
-    const userTrophies = (userTrophiesData ?? []) as UserTrophyRow[];
-    const earnedMap = new Map<string, UserTrophyRow>();
-
-    for (const item of userTrophies) {
-      earnedMap.set(item.trophy_id, item);
-    }
-
-    return orderedTrophies.map((trophy) => {
-      const earnedData = earnedMap.get(trophy.id);
-
-      return {
-        ...trophy,
-        earned: Boolean(earnedData),
-        earned_at: earnedData?.earned_at ?? null,
-        notes: earnedData?.notes ?? null,
-      };
-    });
-  }
-
-  async function loadData(currentUserId: string, currentGameId: string) {
-    const [gameData, trophiesData] = await Promise.all([
-      getGameById(currentUserId, currentGameId),
-      getGameTrophies(currentUserId, currentGameId),
-    ]);
-
-    setGame(gameData);
-    setTrophies(trophiesData);
-  }
+      setGame(gameData);
+      setTrophies(trophiesData);
+    },
+    [],
+  );
 
   useEffect(() => {
     async function init() {
@@ -366,7 +369,7 @@ export default function GameDetailPage() {
     }
 
     init();
-  }, [gameId, router]);
+  }, [gameId, loadData, router]);
 
   const earnedCount = useMemo(
     () => trophies.filter((trophy) => trophy.earned).length,
