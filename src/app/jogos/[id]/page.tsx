@@ -52,6 +52,12 @@ type TimelineItem = {
 
 type ModalMode = "create" | "edit";
 
+type SuccessFeedback = {
+  action: "create" | "edit" | "delete";
+  trophyTitle: string;
+  occurredAt: string | null;
+};
+
 function getStatusLabel(status: string | null) {
   if (!status) return "Sem status";
 
@@ -324,6 +330,7 @@ export default function GameDetailPage() {
   const [manualDate, setManualDate] = useState(getDefaultManualDate());
   const [manualTime, setManualTime] = useState(getDefaultManualTime());
   const [saveError, setSaveError] = useState("");
+  const [successFeedback, setSuccessFeedback] = useState<SuccessFeedback | null>(null);
 
   const gameId = typeof params?.id === "string" ? params.id : "";
 
@@ -391,6 +398,16 @@ export default function GameDetailPage() {
     return buildTimeline(game, trophies);
   }, [game, trophies]);
 
+  useEffect(() => {
+    if (!successFeedback) return;
+
+    const timeoutId = window.setTimeout(() => {
+      setSuccessFeedback(null);
+    }, 4000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [successFeedback]);
+
   function openCreateModal(trophy: TrophyWithUserState) {
     setModalMode("create");
     setSelectedTrophy(trophy);
@@ -425,6 +442,10 @@ export default function GameDetailPage() {
 
   function closeDeleteModal() {
     setTrophyPendingDelete(null);
+  }
+
+  function closeSuccessModal() {
+    setSuccessFeedback(null);
   }
 
   async function handleRegisterTrophy() {
@@ -463,7 +484,13 @@ export default function GameDetailPage() {
       }
 
       await loadData(userId, gameId);
+      const trophyTitle = selectedTrophy.title;
       closeRegisterModal();
+      setSuccessFeedback({
+        action: "create",
+        trophyTitle,
+        occurredAt: earnedAtIso,
+      });
     } catch (error) {
       console.error("Erro inesperado ao registrar troféu:", error);
       setSaveError("Ocorreu um erro inesperado ao registrar o troféu.");
@@ -510,7 +537,13 @@ export default function GameDetailPage() {
       }
 
       await loadData(userId, gameId);
+      const trophyTitle = selectedTrophy.title;
       closeRegisterModal();
+      setSuccessFeedback({
+        action: "edit",
+        trophyTitle,
+        occurredAt: earnedAtIso,
+      });
     } catch (error) {
       console.error("Erro inesperado ao atualizar troféu:", error);
       setSaveError("Ocorreu um erro inesperado ao atualizar o troféu.");
@@ -537,7 +570,13 @@ export default function GameDetailPage() {
       }
 
       await loadData(userId, gameId);
+      const trophyTitle = trophyPendingDelete.title;
       closeDeleteModal();
+      setSuccessFeedback({
+        action: "delete",
+        trophyTitle,
+        occurredAt: null,
+      });
     } catch (error) {
       console.error("Erro inesperado ao remover conquista:", error);
     } finally {
@@ -1012,6 +1051,66 @@ export default function GameDetailPage() {
               >
                 {deleting ? "Removendo..." : "Confirmar remoção"}
               </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {successFeedback ? (
+        <div
+          className="pointer-events-none fixed left-4 right-4 top-4 z-[80] sm:left-auto sm:right-6 sm:top-6 sm:w-[420px]"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <div
+            role="status"
+            className="pointer-events-auto rounded-[22px] border border-emerald-500/25 bg-zinc-950/95 p-4 shadow-2xl shadow-black/50 backdrop-blur"
+          >
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-950/50 text-lg text-emerald-300">
+                ✓
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-emerald-400/80">
+                      Operação concluída
+                    </p>
+
+                    <p className="mt-1 font-semibold text-zinc-100">
+                      {successFeedback.action === "create"
+                        ? "Conquista registrada!"
+                        : successFeedback.action === "edit"
+                          ? "Conquista atualizada!"
+                          : "Conquista removida!"}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={closeSuccessModal}
+                    className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-zinc-400 transition hover:bg-white/10 hover:text-white"
+                    aria-label="Fechar notificação"
+                  >
+                    Fechar
+                  </button>
+                </div>
+
+                <p className="mt-2 text-sm leading-5 text-zinc-400">
+                  {successFeedback.trophyTitle}
+                </p>
+
+                {successFeedback.occurredAt ? (
+                  <p className="mt-1 text-xs text-emerald-300/90">
+                    {formatDateTime(successFeedback.occurredAt)}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full w-full bg-emerald-400/70" />
             </div>
           </div>
         </div>
